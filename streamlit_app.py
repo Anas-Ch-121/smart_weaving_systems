@@ -5,14 +5,23 @@ Connects to Flask backend at http://localhost:5000
 """
 
 import streamlit as st
-import requests
 import pandas as pd
 from datetime import date
+from supabase import create_client, Client
 
 # ─────────────────────────────────────────────
-# CONFIG
+# SUPABASE CONFIG
 # ─────────────────────────────────────────────
-API = "http://127.0.0.1:5000"
+# Using st.secrets for cloud deployment
+try:
+    URL = st.secrets["SUPABASE_URL"]
+    KEY = st.secrets["SUPABASE_KEY"]
+except Exception:
+    # Fallback for local testing if secrets aren't set
+    URL = "https://qeiqpxmnkmbnqfubkpaq.supabase.co"
+    KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFlaXFweG1ua21ibnFmdWJrcGFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyMTU5MDMsImV4cCI6MjA5Mzc5MTkwM30.qNVnjOtxJ-d-Gvwy_wQ_nA2wzCYTarusawRLVQaAYH4"
+
+sb: Client = create_client(URL, KEY)
 
 st.set_page_config(
     page_title="Smart Weaving",
@@ -96,35 +105,26 @@ html, body, [class*="css"] {
 
 
 # ─────────────────────────────────────────────
-# HELPERS
+# HELPERS (Supabase Direct)
 # ─────────────────────────────────────────────
-def api_get(path):
-    try:
-        r = requests.get(f"{API}{path}", timeout=8)
-        r.raise_for_status()
-        return r.json(), None
-    except requests.exceptions.ConnectionError as e:
-        return None, f"❌ Connection Error: {str(e)}"
-    except requests.exceptions.Timeout:
-        return None, "❌ Timeout — backend slow hai"
-    except Exception as e:
-        return None, f"❌ Error: {type(e).__name__}: {str(e)}"
-
-def api_post(path, payload):
-    try:
-        r = requests.post(f"{API}{path}", json=payload, timeout=8)
-        return r.json(), r.status_code
-    except requests.exceptions.ConnectionError as e:
-        return {"error": f"Connection Error: {str(e)}"}, 503
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {str(e)}"}, 500
-
 def show_error(msg):
     st.error(msg)
 
-
 def show_success(msg):
     st.success(msg)
+
+def get_financial_summary():
+    try:
+        res = sb.table("financial_record").select("amount, transaction_type").execute()
+        income  = sum(r["amount"] for r in res.data if r["transaction_type"] == "income")
+        expense = sum(r["amount"] for r in res.data if r["transaction_type"] == "expense")
+        return {
+            "total_income":  income,
+            "total_expense": expense,
+            "net_profit":    income - expense
+        }, None
+    except Exception as e:
+        return None, str(e)
 
 
 # ─────────────────────────────────────────────
@@ -161,14 +161,20 @@ def login_page():
                     show_error("Email aur password dono bharo.")
                     return
 
-                resp, code = api_post("/login", {"email": email, "password": password})
-
-                if code == 200 and "user" in resp:
-                    st.session_state.logged_in = True
-                    st.session_state.user = resp["user"]
-                    st.rerun()
-                else:
-                    show_error(resp.get("error", "Login failed"))
+                try:
+                    res = sb.table("app_user").select("*").eq("email", email).eq("password", password).execute()
+                    if res.data:
+                        user = res.data[0]
+                        is_admin = sb.table("admin").select("user_id").eq("user_id", user["user_id"]).execute()
+                        user["role"] = "admin" if is_admin.data else "operator"
+                        
+                        st.session_state.logged_in = True
+                        st.session_state.user = user
+                        st.rerun()
+                    else:
+                        show_error("Invalid email or password")
+                except Exception as e:
+                    show_error(f"Login error: {str(e)}")
 
 
 # ═══════════════════════════════════════════
@@ -178,22 +184,28 @@ def dashboard():
     st.markdown('<div class="sec-header">📊 DASHBOARD</div>', unsafe_allow_html=True)
 
     # Financial summary
-    fin, err = api_get("/financial/summary")
+    fin, err = get_financial_summary()
     if err:
-        show_error(err)
+        show_error(f"Financial summary error: {err}")
         fin = {"total_income": 0, "total_expense": 0, "net_profit": 0}
 
     # Inventory count
-    inv, _ = api_get("/inventory")
-    inv_count = len(inv) if inv else 0
+    try:
+        inv_res = sb.table("v_inventory").select("*").execute()
+        inv_count = len(inv_res.data) if inv_res.data else 0
+    except: inv_count = 0
 
     # Looms count
-    looms, _ = api_get("/looms")
-    loom_count = len(looms) if looms else 0
+    try:
+        looms_res = sb.table("v_loom_status").select("*").execute()
+        loom_count = len(looms_res.data) if looms_res.data else 0
+    except: loom_count = 0
 
     # Production count
-    prod, _ = api_get("/production")
-    prod_count = len(prod) if prod else 0
+    try:
+        prod_res = sb.table("v_production_history").select("*").execute()
+        prod_count = len(prod_res.data) if prod_res.data else 0
+    except: prod_count = 0
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -234,13 +246,15 @@ def dashboard():
     # Recent financial records
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="sec-header">💰 RECENT TRANSACTIONS</div>', unsafe_allow_html=True)
-    records, err = api_get("/financial/records")
-    if records:
-        df = pd.DataFrame(records[:10])
-        if not df.empty:
+    try:
+        records_res = sb.table("financial_record").select("*").order("transaction_date", desc=True).limit(10).execute()
+        if records_res.data:
+            df = pd.DataFrame(records_res.data)
             st.dataframe(df, use_container_width=True, hide_index=True)
-    elif err:
-        show_error(err)
+        else:
+            st.info("No records found.")
+    except Exception as e:
+        show_error(f"Transactions error: {str(e)}")
 
 
 # ═══════════════════════════════════════════
@@ -252,14 +266,15 @@ def inventory_page():
     tab1, tab2, tab3 = st.tabs(["📋 View Stock", "➕ Add Material", "🔄 Restock"])
 
     with tab1:
-        data, err = api_get("/inventory")
-        if err:
-            show_error(err)
-        elif data:
-            df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Koi inventory record nahi mila.")
+        try:
+            data_res = sb.table("v_inventory").select("*").execute()
+            if data_res.data:
+                df = pd.DataFrame(data_res.data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Koi inventory record nahi mila.")
+        except Exception as e:
+            show_error(f"Inventory fetch error: {str(e)}")
 
     with tab2:
         st.markdown("#### New Raw Material Add Karo")
@@ -274,34 +289,46 @@ def inventory_page():
                 if not name:
                     show_error("Material name required hai.")
                 else:
-                    res, code = api_post("/inventory/add", {
-                        "resource_name":  name,
-                        "stock_quantity": qty,
-                        "unit":           unit,
-                        "cost_per_unit":  cost
-                    })
-                    if code == 200:
-                        show_success(res.get("message", "Added!"))
-                    else:
-                        show_error(res.get("error", "Failed"))
+                    try:
+                        r = sb.table("resource").insert({
+                            "resource_name": name,
+                            "resource_type": "raw_material"
+                        }).execute()
+                        rid = r.data[0]["resource_id"]
+                        sb.table("raw_material").insert({
+                            "resource_id":    rid,
+                            "stock_quantity": float(qty),
+                            "unit":           unit,
+                            "cost_per_unit":  float(cost)
+                        }).execute()
+                        show_success(f"Raw material '{name}' added ✅")
+                    except Exception as e:
+                        show_error(f"Add error: {str(e)}")
 
     with tab3:
         st.markdown("#### Existing Stock Restock Karo")
-        inv, _ = api_get("/inventory")
+        try:
+            inv_res = sb.table("v_inventory").select("resource_id, resource_name").execute()
+            inv = inv_res.data
+        except: inv = []
+        
         if inv:
             options = {f"{i.get('resource_name', 'Unknown')} (ID: {i['resource_id']})": i["resource_id"] for i in inv}
             selected = st.selectbox("Material Select Karo", list(options.keys()))
             qty_add  = st.number_input("Quantity to Add", min_value=0.1, step=0.5)
 
             if st.button("Restock ✅", type="primary"):
-                res, code = api_post("/inventory/restock", {
-                    "resource_id": options[selected],
-                    "quantity":    qty_add
-                })
-                if code == 200:
-                    show_success(res.get("message", "Restocked!"))
-                else:
-                    show_error(res.get("error", "Failed"))
+                try:
+                    rid = options[selected]
+                    cur = sb.table("raw_material").select("stock_quantity").eq("resource_id", rid).execute()
+                    if cur.data:
+                        new_qty = cur.data[0]["stock_quantity"] + qty_add
+                        sb.table("raw_material").update({"stock_quantity": new_qty}).eq("resource_id", rid).execute()
+                        show_success(f"Restocked {qty_add} units ✅")
+                    else:
+                        show_error("Resource not found")
+                except Exception as e:
+                    show_error(f"Restock error: {str(e)}")
         else:
             st.info("Pehle koi material add karo.")
 
@@ -315,14 +342,15 @@ def looms_page():
     tab1, tab2, tab3 = st.tabs(["📋 View Looms", "➕ Add Loom", "🔧 Update Status"])
 
     with tab1:
-        data, err = api_get("/looms")
-        if err:
-            show_error(err)
-        elif data:
-            df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Koi loom record nahi.")
+        try:
+            data_res = sb.table("v_loom_status").select("*").execute()
+            if data_res.data:
+                df = pd.DataFrame(data_res.data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Koi loom record nahi.")
+        except Exception as e:
+            show_error(f"Looms fetch error: {str(e)}")
 
     with tab2:
         st.markdown("#### New Loom Add Karo")
@@ -336,33 +364,39 @@ def looms_page():
                 if not name:
                     show_error("Loom name required.")
                 else:
-                    res, code = api_post("/looms/add", {
-                        "resource_name":    name,
-                        "loom_status":      status,
-                        "maintenance_date": str(mdate)
-                    })
-                    if code == 200:
-                        show_success(res.get("message", "Added!"))
-                    else:
-                        show_error(res.get("error", "Failed"))
+                    try:
+                        r = sb.table("resource").insert({
+                            "resource_name": name,
+                            "resource_type": "loom"
+                        }).execute()
+                        rid = r.data[0]["resource_id"]
+                        sb.table("loom").insert({
+                            "resource_id":      rid,
+                            "loom_status":      status,
+                            "maintenance_date": str(mdate)
+                        }).execute()
+                        show_success(f"Loom '{name}' added ✅")
+                    except Exception as e:
+                        show_error(f"Add error: {str(e)}")
 
     with tab3:
         st.markdown("#### Loom Status Update Karo")
-        looms, _ = api_get("/looms")
+        try:
+            looms_res = sb.table("v_loom_status").select("resource_id, resource_name").execute()
+            looms = looms_res.data
+        except: looms = []
+
         if looms:
-            options = {f"{l.get('loom_name', l.get('resource_name', 'Loom'))} (ID: {l['resource_id']})": l["resource_id"] for l in looms}
+            options = {f"{l.get('resource_name', 'Loom')} (ID: {l['resource_id']})": l["resource_id"] for l in looms}
             selected = st.selectbox("Loom Select Karo", list(options.keys()))
             new_status = st.selectbox("New Status", ["active", "idle", "maintenance"])
 
             if st.button("Update Status ✅", type="primary"):
-                res, code = api_post("/looms/update-status", {
-                    "resource_id": options[selected],
-                    "status":      new_status
-                })
-                if code == 200:
-                    show_success(res.get("message", "Updated!"))
-                else:
-                    show_error(res.get("error", "Failed"))
+                try:
+                    sb.table("loom").update({"loom_status": new_status}).eq("resource_id", options[selected]).execute()
+                    show_success("Loom status updated ✅")
+                except Exception as e:
+                    show_error(f"Update error: {str(e)}")
         else:
             st.info("Pehle koi loom add karo.")
 
@@ -376,19 +410,25 @@ def production_page():
     tab1, tab2 = st.tabs(["📋 History", "➕ Log Production"])
 
     with tab1:
-        data, err = api_get("/production")
-        if err:
-            show_error(err)
-        elif data:
-            df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Koi production record nahi.")
+        try:
+            data_res = sb.table("v_production_history").select("*").execute()
+            if data_res.data:
+                df = pd.DataFrame(data_res.data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Koi production record nahi.")
+        except Exception as e:
+            show_error(f"Production fetch error: {str(e)}")
 
     with tab2:
         st.markdown("#### New Production Entry")
-        operators, _ = api_get("/operators")
-        inv, _       = api_get("/inventory")
+        try:
+            op_res = sb.table("operator").select("user_id, app_user(full_name, email)").execute()
+            operators = op_res.data
+            inv_res = sb.table("v_inventory").select("resource_id, resource_name").execute()
+            inv = inv_res.data
+        except:
+            operators, inv = [], []
 
         if not operators:
             show_error("Koi operator nahi mila. Pehle operators add karo via Supabase.")
@@ -396,7 +436,7 @@ def production_page():
 
         op_options = {}
         for o in operators:
-            name = o.get("app_user", {}).get("full_name", f"Operator {o['user_id']}") if isinstance(o.get("app_user"), dict) else f"Operator {o['user_id']}"
+            name = o.get("app_user", {}).get("full_name", f"Operator {o['user_id']}")
             op_options[name] = o["user_id"]
 
         with st.form("add_production"):
@@ -422,17 +462,25 @@ def production_page():
             submitted = st.form_submit_button("Log Production ✅", type="primary")
 
             if submitted:
-                res, code = api_post("/production/add", {
-                    "operator_id":     op_options[op_sel],
-                    "production_date": str(prod_date),
-                    "total_output":    output,
-                    "notes":           notes,
-                    "details":         details
-                })
-                if code == 200:
-                    show_success(res.get("message", "Production logged!"))
-                else:
-                    show_error(res.get("error", "Failed"))
+                try:
+                    p = sb.table("production").insert({
+                        "operator_id":     op_options[op_sel],
+                        "production_date": str(prod_date),
+                        "total_output":    float(output),
+                        "notes":           notes
+                    }).execute()
+                    pid = p.data[0]["production_id"]
+                    
+                    for item in details:
+                        sb.table("production_detail").insert({
+                            "production_id": pid,
+                            "resource_id":   item["resource_id"],
+                            "quantity_used": float(item["quantity_used"])
+                        }).execute()
+                    
+                    show_success("Production logged ✅")
+                except Exception as e:
+                    show_error(f"Log error: {str(e)}")
 
 
 # ═══════════════════════════════════════════
@@ -442,7 +490,7 @@ def financial_page():
     st.markdown('<div class="sec-header">💰 FINANCIAL RECORDS</div>', unsafe_allow_html=True)
 
     # Summary cards
-    fin, err = api_get("/financial/summary")
+    fin, err = get_financial_summary()
     if fin:
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -461,23 +509,25 @@ def financial_page():
                 <div class="val">PKR {fin['net_profit']:,.0f}</div>
                 <div class="lbl">Net Profit</div>
             </div>""", unsafe_allow_html=True)
+    elif err:
+        show_error(f"Financial summary error: {err}")
 
     st.markdown("<br>", unsafe_allow_html=True)
     tab1, tab2 = st.tabs(["📋 All Records", "➕ Add Record"])
 
     with tab1:
-        data, err = api_get("/financial/records")
-        if err:
-            show_error(err)
-        elif data:
-            df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Koi financial record nahi.")
+        try:
+            records_res = sb.table("financial_record").select("*").order("transaction_date", desc=True).execute()
+            if records_res.data:
+                df = pd.DataFrame(records_res.data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Koi financial record nahi.")
+        except Exception as e:
+            show_error(f"Financial fetch error: {str(e)}")
 
     with tab2:
         st.markdown("#### New Financial Entry")
-        prod, _ = api_get("/production")
 
         with st.form("add_financial"):
             prod_id  = st.number_input("Production ID (optional, 0 for none)", min_value=0, step=1)
@@ -488,18 +538,18 @@ def financial_page():
             submitted = st.form_submit_button("Save Record ✅", type="primary")
 
             if submitted:
-                payload = {
-                    "production_id":    prod_id if prod_id > 0 else None,
-                    "amount":           amount,
-                    "transaction_type": tx_type,
-                    "transaction_date": str(tx_date),
-                    "description":      desc
-                }
-                res, code = api_post("/financial/add", payload)
-                if code == 200:
-                    show_success(res.get("message", "Saved!"))
-                else:
-                    show_error(res.get("error", "Failed"))
+                try:
+                    payload = {
+                        "production_id":    prod_id if prod_id > 0 else None,
+                        "amount":           float(amount),
+                        "transaction_type": tx_type,
+                        "transaction_date": str(tx_date),
+                        "description":      desc
+                    }
+                    sb.table("financial_record").insert(payload).execute()
+                    show_success("Financial record saved ✅")
+                except Exception as e:
+                    show_error(f"Save error: {str(e)}")
 
 
 # ═══════════════════════════════════════════
@@ -508,15 +558,14 @@ def financial_page():
 def operators_page():
     st.markdown('<div class="sec-header">👷 OPERATORS</div>', unsafe_allow_html=True)
 
-    data, err = api_get("/operators")
-    if err:
-        show_error(err)
-    elif data:
-        # Flatten nested app_user
-        rows = []
-        for o in data:
-            user_info = o.get("app_user") or {}
-            if isinstance(user_info, dict):
+    try:
+        op_res = sb.table("operator").select("user_id, shift, expertise, app_user(full_name, email)").execute()
+        data = op_res.data
+        if data:
+            # Flatten nested app_user
+            rows = []
+            for o in data:
+                user_info = o.get("app_user") or {}
                 rows.append({
                     "user_id":   o["user_id"],
                     "full_name": user_info.get("full_name", "—"),
@@ -524,12 +573,12 @@ def operators_page():
                     "shift":     o.get("shift", "—"),
                     "expertise": o.get("expertise", "—"),
                 })
-            else:
-                rows.append(o)
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("Koi operator record nahi. Supabase mein directly add karo.")
+            df = pd.DataFrame(rows)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Koi operator record nahi. Supabase mein directly add karo.")
+    except Exception as e:
+        show_error(f"Operators fetch error: {str(e)}")
 
     st.markdown("""
     > 💡 **Tip:** Operators add karne ke liye pehle Supabase mein `app_user` table mein user add karo, 
