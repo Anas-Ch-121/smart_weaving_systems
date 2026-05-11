@@ -1,6 +1,3 @@
-flask
-flask-cors
 supabase
 streamlit
-requests
 pandas
