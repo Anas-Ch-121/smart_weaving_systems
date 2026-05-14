@@ -186,5 +186,65 @@ def financial_totals():
     })
 
 
+@app.route("/inventory/delete", methods=["POST"])
+def delete_inventory():
+    d = request.json
+    rid = d.get("resource_id")
+    try:
+        sb.table("raw_material").delete().eq("resource_id", rid).execute()
+        sb.table("resource").delete().eq("resource_id", rid).execute()
+        return jsonify({"message": "Raw material deleted ✅"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/looms/delete", methods=["POST"])
+def delete_loom():
+    d = request.json
+    rid = d.get("resource_id")
+    try:
+        sb.table("loom").delete().eq("resource_id", rid).execute()
+        sb.table("resource").delete().eq("resource_id", rid).execute()
+        return jsonify({"message": "Loom deleted ✅"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/production/delete", methods=["POST"])
+def delete_production():
+    d = request.json
+    pid = d.get("production_id")
+    try:
+        sb.table("production_detail").delete().eq("production_id", pid).execute()
+        sb.table("financial_record").delete().eq("production_id", pid).execute()
+        sb.table("production").delete().eq("production_id", pid).execute()
+        return jsonify({"message": "Production record deleted ✅"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/financial/delete", methods=["POST"])
+def delete_financial():
+    d = request.json
+    rid = d.get("record_id")
+    try:
+        sb.table("financial_record").delete().eq("record_id", rid).execute()
+        return jsonify({"message": "Financial record deleted ✅"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/operators/delete", methods=["POST"])
+def delete_operator():
+    d = request.json
+    uid = d.get("user_id")
+    try:
+        sb.table("operator").delete().eq("user_id", uid).execute()
+        sb.table("app_user").delete().eq("user_id", uid).execute()
+        return jsonify({"message": "Operator deleted ✅"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
