@@ -263,7 +263,7 @@ def dashboard():
 def inventory_page():
     st.markdown('<div class="sec-header">📦 INVENTORY — RAW MATERIALS</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["📋 View Stock", "➕ Add Material", "🔄 Restock"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 View Stock", "➕ Add Material", "🔄 Restock", "🗑️ Delete"])
 
     with tab1:
         try:
@@ -332,6 +332,32 @@ def inventory_page():
         else:
             st.info("Pehle koi material add karo.")
 
+    with tab4:
+        st.markdown("#### Raw Material Delete Karo")
+        st.warning("⚠️ Deleting a material will permanently remove it and cannot be undone.")
+        try:
+            inv_res2 = sb.table("v_inventory").select("resource_id, resource_name").execute()
+            inv_del = inv_res2.data
+        except:
+            inv_del = []
+
+        if inv_del:
+            del_options = {f"{i.get('resource_name', 'Unknown')} (ID: {i['resource_id']})": i["resource_id"] for i in inv_del}
+            del_selected = st.selectbox("Material Select Karo (Delete)", list(del_options.keys()), key="inv_del_select")
+
+            confirm_del = st.checkbox("Haan, main confirm karta/karti hoon ke yeh delete karna chahta/chahti hoon", key="inv_del_confirm")
+            if st.button("🗑️ Delete Material", type="primary", disabled=not confirm_del):
+                try:
+                    rid = del_options[del_selected]
+                    sb.table("raw_material").delete().eq("resource_id", rid).execute()
+                    sb.table("resource").delete().eq("resource_id", rid).execute()
+                    show_success("Raw material deleted ✅")
+                    st.rerun()
+                except Exception as e:
+                    show_error(f"Delete error: {str(e)}")
+        else:
+            st.info("Koi material nahi mila.")
+
 
 # ═══════════════════════════════════════════
 # LOOMS
@@ -339,7 +365,7 @@ def inventory_page():
 def looms_page():
     st.markdown('<div class="sec-header">⚙️ LOOM MANAGEMENT</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["📋 View Looms", "➕ Add Loom", "🔧 Update Status"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 View Looms", "➕ Add Loom", "🔧 Update Status", "🗑️ Delete"])
 
     with tab1:
         try:
@@ -400,6 +426,32 @@ def looms_page():
         else:
             st.info("Pehle koi loom add karo.")
 
+    with tab4:
+        st.markdown("#### Loom Delete Karo")
+        st.warning("⚠️ Deleting a loom will permanently remove it and cannot be undone.")
+        try:
+            looms_del_res = sb.table("v_loom_status").select("resource_id, resource_name").execute()
+            looms_del = looms_del_res.data
+        except:
+            looms_del = []
+
+        if looms_del:
+            del_options = {f"{l.get('resource_name', 'Loom')} (ID: {l['resource_id']})": l["resource_id"] for l in looms_del}
+            del_selected = st.selectbox("Loom Select Karo (Delete)", list(del_options.keys()), key="loom_del_select")
+
+            confirm_del = st.checkbox("Haan, main confirm karta/karti hoon ke yeh delete karna chahta/chahti hoon", key="loom_del_confirm")
+            if st.button("🗑️ Delete Loom", type="primary", disabled=not confirm_del):
+                try:
+                    rid = del_options[del_selected]
+                    sb.table("loom").delete().eq("resource_id", rid).execute()
+                    sb.table("resource").delete().eq("resource_id", rid).execute()
+                    show_success("Loom deleted ✅")
+                    st.rerun()
+                except Exception as e:
+                    show_error(f"Delete error: {str(e)}")
+        else:
+            st.info("Koi loom nahi mila.")
+
 
 # ═══════════════════════════════════════════
 # PRODUCTION
@@ -407,7 +459,7 @@ def looms_page():
 def production_page():
     st.markdown('<div class="sec-header">🏭 PRODUCTION LOG</div>', unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["📋 History", "➕ Log Production"])
+    tab1, tab2, tab3 = st.tabs(["📋 History", "➕ Log Production", "🗑️ Delete"])
 
     with tab1:
         try:
@@ -482,6 +534,36 @@ def production_page():
                 except Exception as e:
                     show_error(f"Log error: {str(e)}")
 
+    with tab3:
+        st.markdown("#### Production Record Delete Karo")
+        st.warning("⚠️ Deleting a production record will also delete its details and linked financial records.")
+        try:
+            prod_del_res = sb.table("v_production_history").select("production_id, operator_name, production_date, total_output").execute()
+            prod_del = prod_del_res.data
+        except:
+            prod_del = []
+
+        if prod_del:
+            del_options = {
+                f"{p.get('operator_name','?')} — {p.get('production_date','?')} — {p.get('total_output','?')} units (ID: {p['production_id']})": p["production_id"]
+                for p in prod_del
+            }
+            del_selected = st.selectbox("Production Record Select Karo", list(del_options.keys()), key="prod_del_select")
+
+            confirm_del = st.checkbox("Haan, main confirm karta/karti hoon ke yeh delete karna chahta/chahti hoon", key="prod_del_confirm")
+            if st.button("🗑️ Delete Production Record", type="primary", disabled=not confirm_del):
+                try:
+                    pid = del_options[del_selected]
+                    sb.table("production_detail").delete().eq("production_id", pid).execute()
+                    sb.table("financial_record").delete().eq("production_id", pid).execute()
+                    sb.table("production").delete().eq("production_id", pid).execute()
+                    show_success("Production record deleted ✅")
+                    st.rerun()
+                except Exception as e:
+                    show_error(f"Delete error: {str(e)}")
+        else:
+            st.info("Koi production record nahi mila.")
+
 
 # ═══════════════════════════════════════════
 # FINANCIAL
@@ -513,7 +595,7 @@ def financial_page():
         show_error(f"Financial summary error: {err}")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["📋 All Records", "➕ Add Record"])
+    tab1, tab2, tab3 = st.tabs(["📋 All Records", "➕ Add Record", "🗑️ Delete"])
 
     with tab1:
         try:
@@ -551,6 +633,34 @@ def financial_page():
                 except Exception as e:
                     show_error(f"Save error: {str(e)}")
 
+    with tab3:
+        st.markdown("#### Financial Record Delete Karo")
+        st.warning("⚠️ Yeh action permanent hai aur undo nahi ho sakta.")
+        try:
+            fin_del_res = sb.table("financial_record").select("*").order("transaction_date", desc=True).execute()
+            fin_del = fin_del_res.data
+        except:
+            fin_del = []
+
+        if fin_del:
+            del_options = {
+                f"{r.get('transaction_type','?').upper()} — PKR {r.get('amount','?')} — {r.get('transaction_date','?')} — {r.get('description','') or 'No desc'} (ID: {r['record_id']})": r["record_id"]
+                for r in fin_del
+            }
+            del_selected = st.selectbox("Record Select Karo", list(del_options.keys()), key="fin_del_select")
+
+            confirm_del = st.checkbox("Haan, main confirm karta/karti hoon ke yeh delete karna chahta/chahti hoon", key="fin_del_confirm")
+            if st.button("🗑️ Delete Financial Record", type="primary", disabled=not confirm_del):
+                try:
+                    rid = del_options[del_selected]
+                    sb.table("financial_record").delete().eq("record_id", rid).execute()
+                    show_success("Financial record deleted ✅")
+                    st.rerun()
+                except Exception as e:
+                    show_error(f"Delete error: {str(e)}")
+        else:
+            st.info("Koi financial record nahi mila.")
+
 
 # ═══════════════════════════════════════════
 # OPERATORS
@@ -558,32 +668,65 @@ def financial_page():
 def operators_page():
     st.markdown('<div class="sec-header">👷 OPERATORS</div>', unsafe_allow_html=True)
 
-    try:
-        op_res = sb.table("operator").select("user_id, shift, expertise, app_user(full_name, email)").execute()
-        data = op_res.data
-        if data:
-            # Flatten nested app_user
-            rows = []
-            for o in data:
-                user_info = o.get("app_user") or {}
-                rows.append({
-                    "user_id":   o["user_id"],
-                    "full_name": user_info.get("full_name", "—"),
-                    "email":     user_info.get("email", "—"),
-                    "shift":     o.get("shift", "—"),
-                    "expertise": o.get("expertise", "—"),
-                })
-            df = pd.DataFrame(rows)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Koi operator record nahi. Supabase mein directly add karo.")
-    except Exception as e:
-        show_error(f"Operators fetch error: {str(e)}")
+    tab1, tab2 = st.tabs(["📋 View Operators", "🗑️ Delete Operator"])
 
-    st.markdown("""
-    > 💡 **Tip:** Operators add karne ke liye pehle Supabase mein `app_user` table mein user add karo, 
-    phir `operator` table mein us user ka `user_id` dal do.
-    """)
+    with tab1:
+        try:
+            op_res = sb.table("operator").select("user_id, shift, expertise, app_user(full_name, email)").execute()
+            data = op_res.data
+            if data:
+                rows = []
+                for o in data:
+                    user_info = o.get("app_user") or {}
+                    rows.append({
+                        "user_id":   o["user_id"],
+                        "full_name": user_info.get("full_name", "—"),
+                        "email":     user_info.get("email", "—"),
+                        "shift":     o.get("shift", "—"),
+                        "expertise": o.get("expertise", "—"),
+                    })
+                df = pd.DataFrame(rows)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Koi operator record nahi. Supabase mein directly add karo.")
+        except Exception as e:
+            show_error(f"Operators fetch error: {str(e)}")
+
+        st.markdown("""
+        > 💡 **Tip:** Operators add karne ke liye pehle Supabase mein `app_user` table mein user add karo, 
+        phir `operator` table mein us user ka `user_id` dal do.
+        """)
+
+    with tab2:
+        st.markdown("#### Operator Delete Karo")
+        st.warning("⚠️ Operator delete karne se uska `app_user` record bhi permanently delete ho jayega.")
+        try:
+            op_del_res = sb.table("operator").select("user_id, shift, app_user(full_name, email)").execute()
+            ops_del = op_del_res.data
+        except:
+            ops_del = []
+
+        if ops_del:
+            del_options = {}
+            for o in ops_del:
+                u = o.get("app_user") or {}
+                label = f"{u.get('full_name', 'Unknown')} — {u.get('email', '?')} (Shift: {o.get('shift','?')}) [ID: {o['user_id']}]"
+                del_options[label] = o["user_id"]
+
+            del_selected = st.selectbox("Operator Select Karo", list(del_options.keys()), key="op_del_select")
+
+            confirm_del = st.checkbox("Haan, main confirm karta/karti hoon ke yeh delete karna chahta/chahti hoon", key="op_del_confirm")
+            if st.button("🗑️ Delete Operator", type="primary", disabled=not confirm_del):
+                try:
+                    uid = del_options[del_selected]
+                    sb.table("operator").delete().eq("user_id", uid).execute()
+                    sb.table("app_user").delete().eq("user_id", uid).execute()
+                    show_success("Operator deleted ✅")
+                    st.rerun()
+                except Exception as e:
+                    show_error(f"Delete error: {str(e)}")
+        else:
+            st.info("Koi operator nahi mila.")
 
 
 # ═══════════════════════════════════════════
